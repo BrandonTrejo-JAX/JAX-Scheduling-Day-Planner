@@ -1258,7 +1258,7 @@ function showMenu(x,y,t){
   var lunchT=S.tasks.filter(function(x){ return x.kind==='lunch'; })[0];
   if(lunchT && !lunchT.peel && isPeel(t)){ var at=el('button','','\ud83d\udd17  Attach to lunch'); at.addEventListener('click',function(){ hideMenu(); attachPeel(t); }); m.appendChild(at); }
   var nb=el('button','','\ud83d\udcdd  Notes\u2026'); nb.addEventListener('click',function(){ hideMenu(); showInfo(t,'notes'); }); m.appendChild(nb);
-  if(t.kind!=='lunch'){ var ex=el('button','','\u2194  Extend / change time\u2026'); ex.addEventListener('click',function(){ hideMenu(); showExtend(t); }); m.appendChild(ex); }
+  if(t.kind!=='lunch'){ var ex=el('button','','\u2194  Change start / end time\u2026'); ex.addEventListener('click',function(){ hideMenu(); showExtend(t); }); m.appendChild(ex); }
   if(t.kind!=='lunch'){ var dl=el('button','','\ud83d\uddd1  Delete task'); dl.addEventListener('click',function(){ hideMenu(); deleteTask(t); }); m.appendChild(dl); }
   m.classList.remove('hidden');
   var w=m.offsetWidth,h=m.offsetHeight;
@@ -1743,30 +1743,55 @@ function deleteTask(t){
 }
 function showExtend(t){
   var o=openModal('Change time',colorOf(t));
-  o.body.appendChild(el('div','warnline',t.title+'  \u2014  currently '+fmtDur(t.hours)+(t.start!=null?' ('+fmt(t.start)+' - '+fmt(t.start+t.len)+')':'')));
-  var f=el('div','fld'); f.appendChild(el('label','','New duration'));
-  var sel=document.createElement('select');
-  for(var a=1;a<=32;a++){ var op=el('option','',fmtDur(a/4)+(t.start!=null?'  \u2192 ends '+fmt(Math.min(SLOTS,t.start+a)):'')); op.value=String(a); sel.appendChild(op); }
-  sel.value=String(t.len); f.appendChild(sel); o.body.appendChild(f);
+  var placedNow=(t.start!=null);
+  o.body.appendChild(el('div','warnline',t.title+'  \u2014  currently '+fmtDur(t.hours)+(placedNow?' ('+fmt(t.start)+' - '+fmt(t.start+t.len)+')':'')));
+  var sSel=null, eSel=null, dSel=null, info=el('div','','');
+  info.style.cssText='color:var(--muted);font-size:13px;margin-top:4px';
+  if(placedNow){
+    o.body.appendChild(el('div','',"Pick the actual start and end time (15-minute steps). Use this if you started earlier, finished later, or the task took a different amount of time.")).style.cssText='color:var(--muted);font-size:13px;margin-top:8px';
+    sSel=document.createElement('select'); eSel=document.createElement('select');
+    var i; for(i=0;i<SLOTS;i++){ var o1=el('option','',fmt(i)); o1.value=String(i); sSel.appendChild(o1); }
+    for(i=1;i<=SLOTS;i++){ var o2=el('option','',fmt(i)); o2.value=String(i); eSel.appendChild(o2); }
+    sSel.value=String(t.start); eSel.value=String(t.start+t.len);
+    var two=el('div','two'); var fa=el('div'); fa.appendChild(el('label','','Start')); fa.appendChild(sSel);
+    var fb=el('div'); fb.appendChild(el('label','','End')); fb.appendChild(eSel); two.appendChild(fa); two.appendChild(fb);
+    var f=el('div','fld'); f.appendChild(two); o.body.appendChild(f);
+    var upd=function(){ var n=parseInt(eSel.value,10)-parseInt(sSel.value,10); info.textContent=n>0?'New length: '+fmtDur(n/4):'End time must be after the start time.'; };
+    sSel.addEventListener('change',function(){ var st=parseInt(sSel.value,10); if(parseInt(eSel.value,10)<=st) eSel.value=String(Math.min(SLOTS,st+1)); upd(); });
+    eSel.addEventListener('change',upd); upd(); o.body.appendChild(info);
+  } else {
+    var f2=el('div','fld'); f2.appendChild(el('label','','New duration'));
+    dSel=document.createElement('select');
+    for(var a=1;a<=32;a++){ var op=el('option','',fmtDur(a/4)); op.value=String(a); dSel.appendChild(op); }
+    dSel.value=String(t.len); f2.appendChild(dSel); o.body.appendChild(f2);
+    o.body.appendChild(el('div','',"This task isn\u2019t on the calendar yet. Place it first if you want to set exact start and end times.")).style.cssText='color:var(--muted);font-size:12.5px';
+  }
   var err=el('div','merr'); o.body.appendChild(err);
   var c=el('button','btn','Cancel'); c.addEventListener('click',closeInfo);
   var k=el('button','btn primary','Apply');
   k.addEventListener('click',function(){
-    var n=parseInt(sel.value,10); if(n===t.len){ closeInfo(); return; }
+    var ns, n;
+    if(placedNow){ ns=parseInt(sSel.value,10); n=parseInt(eSel.value,10)-ns; if(n<1){ err.textContent='End time must be after the start time.'; return; } }
+    else { ns=null; n=parseInt(dSel.value,10); }
+    if(n===t.len && ns===t.start){ closeInfo(); return; }
     var w=[];
-    if(t.start!=null){
-      if(t.start+n>SLOTS){ err.textContent='That would run past 5:30 PM.'; return; }
-      if(t.kind==='am' && t.start+n>NOON) w.push('\u23f0 Flex AM tasks should finish by 12:00 PM, and this would end at '+fmt(t.start+n)+'.');
-      if(t.start+n>shiftEndSlot() && t.start+t.len<=shiftEndSlot()) w.push('\u23f0 It would now end at '+fmt(t.start+n)+', outside your shift ('+shiftRangeTxt()+').');
-      if(n>t.len){ roomConflicts(t,t.start,n).forEach(function(m){ w.push(m); }); breakIssues(t,t.start,n).forEach(function(m){ w.push(m); }); }
+    if(placedNow){
+      if(ns+n>SLOTS){ err.textContent='That would run past 5:30 PM.'; return; }
+      if(t.kind==='am' && ns+n>NOON) w.push('\u23f0 Flex AM tasks should finish by 12:00 PM, and this would end at '+fmt(ns+n)+'.');
+      if(t.kind==='pm' && ns<NOON) w.push('\u23f0 Flex PM tasks should start at 12:00 PM or later, and this would start at '+fmt(ns)+'.');
+      if(ns<S.shiftStart || ns+n>shiftEndSlot()) w.push('\u23f0 '+fmt(ns)+' - '+fmt(ns+n)+' is outside your shift ('+shiftRangeTxt()+').');
+      roomConflicts(t,ns,n).forEach(function(m){ w.push(m); });
+      breakIssues(t,ns,n).forEach(function(m){ if(w.indexOf(m)<0) w.push(m); });
     }
     function apply(){
       pushUndo();
       var was=t.len; if(t.origLen==null) t.origLen=was;
       t.len=n; t.hours=n/4; if(t.origLen===n) delete t.origLen;
+      if(placedNow){ t.start=ns; delete t.exact; }
       render();
       var ov=(t.start!=null)?overlapsOf(t,t.start,t.len):[];
-      toast(ov.length?'Now '+fmtDur(t.hours)+' \u2014 overlaps \u201c'+ov[0].title+'\u201d.':'Now '+fmtDur(t.hours)+'.');
+      var msg=placedNow?('Now '+fmt(t.start)+' - '+fmt(t.start+t.len)+' ('+fmtDur(t.hours)+')'):('Now '+fmtDur(t.hours));
+      toast(ov.length?msg+' \u2014 overlaps \u201c'+ov[0].title+'\u201d.':msg+'.');
     }
     if(w.length) confirmDlg('Heads up',w.concat(['Change it anyway?']),'Change anyway',apply,function(){ showExtend(t); });
     else { closeInfo(); apply(); }
