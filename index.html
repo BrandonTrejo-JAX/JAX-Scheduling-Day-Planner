@@ -285,10 +285,12 @@ header.top select{width:auto;max-width:260px;padding:6px 10px;font-size:13px;fon
     <span class="chip" id="stat"></span>
     <span class="chip hidden" id="cap2"></span>
     <span class="chip hidden" id="cap"></span>
+    <label class="chip" id="lunchChip" style="cursor:pointer" title="Lunch is added automatically for days with more than 5 hours of tasks. Untick if lunch shouldn't be scheduled for this person today."><input type="checkbox" id="lunchTog"> Lunch</label>
     <div class="spacer"></div>
     <button class="btn" id="undoBtn" title="Undo (Ctrl+Z)">&#8630; Undo</button>
     <button class="btn" id="addBtn" title="Add a task, e.g. when a coworker calls out">+ Add task</button>
-    <button class="btn" id="fillBtn" title="Automatically place the remaining flexible tasks">Auto-fill</button>
+    <!-- Auto-fill is switched off: set SHOW_AUTOFILL=true in the script to show it again -->
+    <button class="btn hidden" id="fillBtn" title="Automatically place the remaining flexible tasks">Auto-fill</button>
     <button class="btn" id="resetBtn" title="Send all flexible tasks back to the list">Reset</button>
     <button class="btn" id="saveBtn" title="Download your progress as a file you can reopen later">Save file</button>
     <button class="btn" id="xlsBtn">Export Excel</button>
@@ -827,7 +829,8 @@ function findTech(input, names){
   }
   return {suggest:cand.slice(0,5)};
 }
-function buildTasks(rows, fills, tech){
+var SHORT_DAY_SLOTS=20;
+function buildTasks(rows, fills, tech, opts){
   var q=normName(tech), tasks=[], warnings=[], rooms={}, palIdx=0;
   rows.forEach(function(r,i){
     if(!isDataRow(r) || normName(r[0])!==q) return;
@@ -865,6 +868,7 @@ function buildTasks(rows, fills, tech){
     } else split2.push(x);
   });
   tasks=split2;
+  var totalSlots=0; tasks.forEach(function(x){ totalSlots+=x.len; });
   var lunch={ id:'lunch', title:'Lunch', hours:0.75, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
   var peels=tasks.filter(isPeel);
   if(peels.length===1){
@@ -874,9 +878,12 @@ function buildTasks(rows, fills, tech){
     tasks.splice(tasks.indexOf(pt),1);
   }
   var dayOff=tasks.some(function(x){ return x.fixed && /timeoff/i.test(x.study) && x.len>=24; });
-  if(!dayOff) tasks.push(lunch); else if(lunch.peel){ var pp=lunch.peel; tasks.push({id:pp.id,title:pp.title,hours:pp.hours,len:pp.len,study:pp.study,room:pp.room,team:pp.team,pm:pp.pm,kind:pp.kind||'flex',fixed:false,start:null,notes:''}); }
-  return { tasks:tasks, rooms:rooms, roots:roots, warnings:warnings, shift:shift };
+  var shortDay=!!(opts&&opts.skipLunchShort) && totalSlots<=SHORT_DAY_SLOTS;
+  var noLunchWhy=dayOff?'dayoff':(shortDay?'short':'');
+  if(!noLunchWhy) tasks.push(lunch); else if(lunch.peel){ var pp=lunch.peel; tasks.push({id:pp.id,title:pp.title,hours:pp.hours,len:pp.len,study:pp.study,room:pp.room,team:pp.team,pm:pp.pm,kind:pp.kind||'flex',fixed:false,start:null,notes:''}); }
+  return { tasks:tasks, rooms:rooms, roots:roots, warnings:warnings, shift:shift, noLunch:noLunchWhy };
 }
+function isPracticeTask(t){ return /^pdpractice/i.test(t.study||'') || /biomethod/i.test(t.title||''); }
 function isBreak(t){ return !t.fixed && t.kind!=='lunch' && /stretch\s*\/?\s*break|break\s*time/i.test(t.title); }
 var NO_BREAK_RULES=false;
 function flagOf(t){ if(NO_BREAK_RULES) return ''; return t.kind==='lunch'?'L':(isBreak(t)?'B':''); }
@@ -935,7 +942,7 @@ function occupancy(excludeId){
   S.tasks.forEach(function(t){ if(t.start==null||t.id===excludeId) return; for(var i=t.start;i<t.start+t.len&&i<SLOTS;i++) o[i]=true; });
   return o;
 }
-function lunchLastSlot(sh){ var m=DAY_START+sh*15; if(m===360) return 19; if(m===420) return 23; if(m===540) return 32; return sh+19; }
+function lunchLastSlot(sh){ return sh+19; }
 function lunchWinTxt(){ return fmt(S.shiftStart+LUNCH_MIN)+' and '+fmt(lunchLastSlot(S.shiftStart)+1); }
 function lunchOff(t){ return (t.peel && t.peelFirst) ? t.peel.len : 0; }
 function rulesOk(t, s){
@@ -1026,6 +1033,7 @@ function renderHeader(){
   c2.className='chip'+(tslots>MAX_TASK_SLOTS?' bad':'');
   $('#undoBtn').disabled=!undoStack.length;
   renderPersonSel();
+  $('#lunchTog').checked=S.tasks.some(function(t){ return t.kind==='lunch'; });
   $('#shiftEnd').textContent='to '+fmt(Math.min(SLOTS,S.shiftStart+SHIFT_SLOTS));
   $('#trayCount').textContent='('+S.tasks.filter(function(t){ return !t.fixed&&t.start==null; }).length+')';
   $('#pTitle').textContent='Daily Schedule - '+S.tech;
@@ -1124,6 +1132,7 @@ function renderTray(){
       box.appendChild(c);
     });
   });
+  if(!S.tasks.some(function(t){ return t.kind==='lunch'; })) box.appendChild(el('div','empty','No lunch on this schedule. Tick \u201cLunch\u201d at the top to add one.'));
   if(!un.length) box.appendChild(el('div','empty','\u2713 All flexible tasks are on your calendar.'));
   if(un.some(function(t){ return /^pdpractice/i.test(t.study)&&canSplit(t); })) box.appendChild(el('div','empty','Tip: practice blocks can be split \u2014 click \u2702 Split.'));
 }
@@ -1366,7 +1375,7 @@ function start(name){
   }
   var sheetName=$('#sheetSel').value||wbCache.SheetNames[0];
   var fresh=function(){
-  var built=buildTasks(data.rows,data.fills,res.match);
+  var built=buildTasks(data.rows,data.fills,res.match,{skipLunchShort:true});
   dirty=false; undoStack=[]; S.roots=built.roots||{}; S.tasks=built.tasks; S.rooms=built.rooms; S.tech=res.match; S.warnings=built.warnings;
   S.sheet=$('#sheetSel').value||wbCache.SheetNames[0]; S.shiftStart=built.shift;
   $('#nameIn').value=res.match;
@@ -1374,6 +1383,7 @@ function start(name){
   $('#rows').innerHTML='';
   render(); $('#calScroll').scrollTop=0;
   if(S.warnings.length) toast(S.warnings[0]+(S.warnings.length>1?' (+'+(S.warnings.length-1)+' more)':''));
+  else if(built.noLunch==='short') toast('No lunch is scheduled for this day (5 hours or less of tasks). Tick \u201cLunch\u201d at the top if you want one.');
   scrollToShift();
   };
   fresh();
@@ -1622,8 +1632,10 @@ function solve1(tasks,baseOcc,lo,hi,baseRooms,noRooms,baseFlags,noBreaks){
   var baseAm=null, baseLunch=null, ord=(noBreaks!==true&&!NO_BREAK_RULES);
   if(ord) S.tasks.forEach(function(x){ if(x.start==null||inList[x.id]||(SOLVE_IGNORE&&SOLVE_IGNORE[x.id])) return; if(x.kind==='lunch') baseLunch=x.start+lunchOff(x); else if(isBreak(x)&&breakKind(x)==='am') baseAm=x.start; });
   var curAm=baseAm, curLunch=baseLunch;
+  var lateLunch=S.tasks.some(isPracticeTask)||tasks.some(isPracticeTask);
   var items=tasks.map(function(t){
     var c=[]; for(var s=lo;s+t.len<=hi;s++) if(rulesOk(t,s)) c.push(s);
+    if(lateLunch && t.kind==='lunch') c.reverse(); /* biomethods day: try the latest allowed lunch first (closest to the 5th hour), so practice comes before lunch */
     var sr=slotRooms(t), fl=flagOf(t);
     return {t:t,c:c,key:t.kind+':'+t.len+':'+sr[0]+':'+sr[sr.length-1]+':'+fl,sr:sr,fl:fl,isL:(t.kind==='lunch'),isA:(isBreak(t)&&breakKind(t)==='am')};
   });
@@ -1833,7 +1845,10 @@ function diagnose(flex,fm,lo,hi){
   for(i=lo;i<hi;i++){ if(!fm.occ[i]){ free++; gap++; if(gap>maxGap) maxGap=gap; } else gap=0; }
   if(need>free) msgs.push('Not enough open time inside the shift: the flexible tasks need '+fmtDur(need/4)+' but only '+fmtDur(free/4)+' is open ('+fmtDur((need-free)/4)+' over).');
   var tooLong=flex.filter(function(t){ return t.len>maxGap; });
-  if(tooLong.length) msgs.push('The longest open gap is '+fmtDur(maxGap/4)+', so these tasks are too long to fit anywhere and should be split: '+tooLong.map(function(t){ return '\u201c'+t.title+'\u201d ('+fmtDur(t.hours)+')'; }).join(', ')+'.');
+  var nm=function(t){ return '\u201c'+t.title+'\u201d ('+fmtDur(t.hours)+')'; };
+  var tlSplit=tooLong.filter(function(t){ return canSplit(t)&&!isBreak(t); }), tlStuck=tooLong.filter(function(t){ return !(canSplit(t)&&!isBreak(t)); });
+  if(tlSplit.length) msgs.push('The longest open gap is '+fmtDur(maxGap/4)+', so these are too long to fit anywhere as one piece (they can be split): '+tlSplit.map(nm).join(', ')+'.');
+  if(tlStuck.length) msgs.push('These don\u2019t fit any open gap and can\u2019t be split: '+tlStuck.map(nm).join(', ')+'.');
   if(!msgs.length) msgs.push('The total time adds up, but the room-gap, break, and AM/PM/lunch rules leave no valid arrangement.');
   return msgs;
 }
@@ -1924,7 +1939,13 @@ function applyPlanCore(plan){
 }
 function applyPlan(plan){ pushUndo(); applyPlanCore(plan); render(); }
 function splitLines(plan){ return plan.splits.map(function(sp){ return '\u2702 \u201c'+sp.task.title+'\u201d ('+fmtDur(sp.task.hours)+')  \u2192  '+fmtDur(sp.a/4)+' + '+fmtDur((sp.task.len-sp.a)/4); }); }
-var SPLIT_TIP='Tip: splitting longer tasks (the \u2702 Split button, or right-click \u2192 Split) lets them fit into smaller gaps.';
+function fitTips(list){
+  var c=list.filter(function(t){ return canSplit(t)&&!isBreak(t); }).sort(function(a,b){ return b.len-a.len; }).slice(0,6);
+  var out=[];
+  if(c.length) out.push('\u2702 You can split these flexible tasks so they fit into smaller gaps (\u2702 Split button, or right-click \u2192 Split): '+c.map(function(t){ return '\u201c'+t.title+'\u201d ('+fmtDur(t.hours)+')'; }).join(', ')+'.');
+  out.push('\u2194 Or tick \u201cAllow overlapping when I drag\u201d (or hold Shift while dragging) and place tasks by hand \u2014 handy if you think something will take less time, or you can transition between rooms faster than 15 minutes.');
+  return out;
+}
 function infoDlg(title,color,lines){
   var o=openModal(title,color);
   lines.forEach(function(m){ o.body.appendChild(el('div','warnline',m)); });
@@ -1944,7 +1965,7 @@ function autoFill(){
       if(d.r){ var kept=un.filter(function(t){ return d.dropped.indexOf(t)<0; }); applyStarts(d.r,kept); }
       infoDlg(d.r?'Placed what fits':'Nothing could be placed','#FFE3A3',
         [(d.r?'Placed '+(un.length-d.dropped.length)+' of '+un.length+' tasks inside your shift ('+shiftRangeTxt()+').':'None of the remaining tasks fit inside your shift ('+shiftRangeTxt()+').'),
-         'Left in your task list (not placed): '+dropNames.join(', ')+'.'].concat(diagnose(un,all,lo,hi)).concat([SPLIT_TIP,'Nothing was placed outside your work hours.']));
+         'Left in your task list (not placed): '+dropNames.join(', ')+'.'].concat(diagnose(un,all,lo,hi)).concat(fitTips(un)).concat(['Nothing was placed outside your work hours.']));
     }
     var plan=planAll(flex,fm,true);
     if(plan.status==='ok') confirmDlg('Rearrangement needed',['Everything fits inside your shift if the flexible tasks you already placed are moved around.'],'Rearrange everything',function(){ applyPlan(plan); },placeFit,'Just place what fits');
@@ -1952,6 +1973,8 @@ function autoFill(){
     else placeFit();
   },30);
 }
+var SHOW_AUTOFILL=false;
+$('#fillBtn').classList.toggle('hidden',!SHOW_AUTOFILL);
 $('#fillBtn').addEventListener('click',autoFill);
 function entries(list){
   var out=[];
@@ -1966,6 +1989,27 @@ function entries(list){
   });
   return out;
 }
+function addLunchTask(){
+  if(S.tasks.some(function(t){ return t.kind==='lunch'; })) return;
+  pushUndo();
+  var lunch={ id:'lunch', title:'Lunch', hours:0.75, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
+  var peels=S.tasks.filter(isPeel);
+  if(peels.length===1){
+    var pt=peels[0];
+    lunch.peel={id:pt.id,title:pt.title,hours:pt.hours,len:pt.len,study:pt.study,room:pt.room,team:pt.team,pm:pt.pm,kind:pt.kind};
+    lunch.peelFirst=true; lunch.len=LUNCH_LEN+pt.len; lunch.title='Lunch + PEEL In/Out';
+    S.tasks=S.tasks.filter(function(x){ return x!==pt; });
+  }
+  S.tasks.push(lunch); render(); toast('Lunch added \u2014 drag it onto your calendar.');
+}
+function removeLunchTask(){
+  var l=S.tasks.filter(function(t){ return t.kind==='lunch'; })[0]; if(!l) return;
+  pushUndo();
+  S.tasks=S.tasks.filter(function(x){ return x!==l; });
+  if(l.peel){ var p=l.peel; S.tasks.push({id:p.id,title:p.title,hours:p.hours,len:p.len,study:p.study,room:p.room,team:p.team,pm:p.pm,kind:p.kind||'flex',fixed:false,start:null,notes:''}); }
+  render(); toast('Lunch removed from this schedule.'+(l.peel?' PEEL In/Out is back in your task list as its own task.':''));
+}
+$('#lunchTog').addEventListener('change',function(){ if(this.checked) addLunchTask(); else removeLunchTask(); });
 function attachPeel(pt){
   var lunch=S.tasks.filter(function(x){ return x.kind==='lunch'; })[0]; if(!lunch||lunch.peel) return;
   pushUndo();
@@ -2016,7 +2060,7 @@ $('#jsonIn').addEventListener('change',function(e){
 });
 function breakKind(t){ if(/\bAM\b/.test(t.title)) return 'am'; if(/\bPM\b/.test(t.title)) return 'pm'; return (t.kind==='am'||t.kind==='pm')?t.kind:'flex'; }
 window.addEventListener('beforeunload',function(e){ if(dirty && !$('#app').classList.contains('hidden')){ e.preventDefault(); e.returnValue=''; return ''; } });
-window.__sched={S:S,entries:entries,placementIssues:placementIssues,roomConflicts:roomConflicts,render:render,buildTasks:buildTasks,planAll:planAll,saveObj:saveObj,detachPeel:detachPeel,attachPeel:attachPeel,techNames:techNames,readSheet:readSheet,solve:solve,rulesOk:rulesOk,wb:function(){return wbCache;}};
+window.__sched={autoFill:autoFill,addLunchTask:addLunchTask,removeLunchTask:removeLunchTask,S:S,entries:entries,placementIssues:placementIssues,roomConflicts:roomConflicts,render:render,buildTasks:buildTasks,planAll:planAll,saveObj:saveObj,detachPeel:detachPeel,attachPeel:attachPeel,techNames:techNames,readSheet:readSheet,solve:solve,rulesOk:rulesOk,wb:function(){return wbCache;}};
 })();
 </script>
 
