@@ -142,6 +142,14 @@ body.dragging,body.dragging *{cursor:grabbing!important}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#1d2330;color:#fff;padding:10px 16px;border-radius:10px;z-index:100;box-shadow:var(--shadow);max-width:90vw}
 
 .print-only{display:none}
+.notice{position:absolute;right:2px;width:22px;z-index:3;border:1.5px solid #d4a017;border-radius:6px;background:#fff3c4;font-size:11px;line-height:1;color:#1d2330;overflow:hidden;padding:2px 0;text-align:center;pointer-events:auto;white-space:nowrap;opacity:.95}
+.block.done{background-image:linear-gradient(rgba(18,24,38,.70),rgba(18,24,38,.70))!important;color:#fff!important}
+.block.done .rb{color:#1d2330}
+.block.done .seg{background-image:linear-gradient(rgba(18,24,38,.70),rgba(18,24,38,.70))!important;color:#fff}
+#sChk{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden}
+#sChk .tabs{padding:6px 10px 0;flex-wrap:wrap}
+#sChk ul{margin:0;padding:10px 14px 12px 32px;font-size:13px;line-height:1.5}
+#sChk li{margin:2px 0}
 
 
 .seg{position:absolute;left:0;right:0;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;overflow:hidden;white-space:nowrap;background:#e9ecf1}
@@ -283,6 +291,7 @@ header.top select{width:auto;max-width:260px;padding:6px 10px;font-size:13px;fon
     <div class="who"><h2 id="techName"></h2><span id="sheetName"></span></div>
     <div class="shiftbox">Shift start <select id="shiftSel"></select><span id="shiftEnd"></span></div>
     <span class="chip" id="stat"></span>
+    <span class="chip good hidden" id="doneChip" title="Right-click a task and choose Mark complete"></span>
     <span class="chip hidden" id="cap2"></span>
     <span class="chip hidden" id="cap"></span>
     <label class="chip" id="lunchChip" style="cursor:pointer" title="Lunch is added automatically for days with more than 5 hours of tasks. Untick if lunch shouldn't be scheduled for this person today."><input type="checkbox" id="lunchTog"> Lunch</label>
@@ -302,7 +311,7 @@ header.top select{width:auto;max-width:260px;padding:6px 10px;font-size:13px;fon
   <main>
     <aside class="panel" id="tray">
       <h3>Tasks to place <span id="trayCount" style="color:var(--muted);font-weight:400"></span></h3>
-      <div class="hint">Drag a task onto the calendar. Right-click a task for info, notes, extend time. <label style="display:block;margin-top:6px;color:var(--text);cursor:pointer"><input type="checkbox" id="ovl"> Allow overlapping when I drag <span style="color:var(--muted)">(or hold Shift)</span></label></div>
+      <div class="hint">Drag a task onto the calendar. Right-click a task for info, notes, change time, or to mark it complete. <label style="display:block;margin-top:6px;color:var(--text);cursor:pointer"><input type="checkbox" id="ovl"> Allow overlapping when I drag <span style="color:var(--muted)">(or hold Shift)</span></label></div>
       <div id="trayList"></div>
     </aside>
 
@@ -758,7 +767,7 @@ function lev(a,b){
   for(i=1;i<=m;i++){ for(j=1;j<=n;j++){ d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1)); } }
   return d[m][n];
 }
-var S = { tasks:[], rooms:{}, roots:{}, tech:'', sheet:'', shiftStart:4, warnings:[] };
+var S = { notices:[], tasks:[], rooms:{}, roots:{}, tech:'', sheet:'', shiftStart:4, warnings:[] };
 var undoStack=[], addCnt=0, dirty=false, overlapOn=false, SOLVE_CAP=300000;
 var wbCache = null;
 var fileName = '';
@@ -829,15 +838,39 @@ function findTech(input, names){
   }
   return {suggest:cand.slice(0,5)};
 }
+function isPracticeStudy(x){ return /^pdpractice\s*\d+/i.test(String(x==null?'':x).trim()); }
+function isPracticeRecordTitle(x){ return /\b(update|updating|record|records|recording)\b/i.test(String(x||'')); }
+function isPracticeWork(t){ return isPracticeStudy(t.study) && !isPracticeRecordTitle(t.title); }
+function isNoticeTitle(x){ return /room\s*sanitation\s*notification/i.test(String(x||'')); }
+function isNeutralRoom(r){ return /wet\s*-?\s*lab/i.test(String(r||'')); }
+function isCafeRoom(r){ return /caf[e\u00e9]/i.test(String(r||'')); }
+function weekendSheet(name){
+  var s=String(name||'');
+  if(/\b(sat(urday)?|sun(day)?)\b/i.test(s)) return true;
+  if(/\b(mon(day)?|tue(s(day)?)?|wed(nesday)?|thu(r(s(day)?)?)?|fri(day)?)\b/i.test(s)) return false;
+  var m=s.match(/(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})/);
+  if(m){ var y=+m[3]; if(y<100) y+=2000; var d=new Date(y,+m[1]-1,+m[2]); if(!isNaN(d.getTime())){ var w=d.getDay(); return w===0||w===6; } }
+  return false;
+}
+function cafeNearLunch(tasks,shift){
+  var lo=shift+LUNCH_MIN, hi=lunchLastSlot(shift)+LUNCH_LEN+4;
+  return tasks.some(function(t){ return t.fixed&&t.start!=null&&isCafeRoom(t.room)&&t.start<hi&&t.start+t.len>lo; });
+}
+function lunchNeedsHour(tasks,shift,sheet){ return !(weekendSheet(sheet)||cafeNearLunch(tasks,shift)); }
+function darkHex(h){ var c=hexToRgb(h).map(function(v){ return Math.round(v*0.36); }); return c.map(function(v){ return (v<16?'0':'')+v.toString(16); }).join('').toUpperCase(); }
 var SHORT_DAY_SLOTS=20;
 function buildTasks(rows, fills, tech, opts){
-  var q=normName(tech), tasks=[], warnings=[], rooms={}, palIdx=0;
+  var q=normName(tech), tasks=[], warnings=[], rooms={}, palIdx=0, notices=[];
   rows.forEach(function(r,i){
     if(!isDataRow(r) || normName(r[0])!==q) return;
     var title=String(r[1]).trim(), hours=Number(r[2]);
     var st=parseTime(r[6]), en=parseTime(r[7]);
     var kind=kindOf(r[5], st!=null);
     var room=String(r[4]==null?'':r[4]).trim();
+    if(isNoticeTitle(title)){
+      if(st!=null){ var ne=(en==null||en<=st)?st+Math.round(hours*60):en, ns0=Math.max(0,Math.floor((st-DAY_START)/15)), ne0=Math.min(SLOTS,Math.ceil((ne-DAY_START)/15)); if(ne0>ns0) notices.push({title:title,room:room,start:ns0,len:ne0-ns0}); }
+      return;
+    }
     var t={ id:'t'+i, title:title, hours:hours, study:String(r[3]==null?'':r[3]).trim(), room:room, kind:kind,
             team:String(r[8]==null?'':r[8]).trim(), pm:String(r[9]==null?'':r[9]).trim(), fixed:kind==='fixed', start:null, len:Math.max(1,Math.ceil(hours*4-1e-9)) };
     if(room && !rooms[room]){
@@ -861,7 +894,7 @@ function buildTasks(rows, fills, tech, opts){
   var shift = fx.length ? Math.min.apply(null, fx.map(function(t){ return t.start; })) : 4;
   var roots={}, split2=[];
   tasks.forEach(function(x){
-    if(!x.fixed && x.len===8 && (/^pdpractice/i.test(x.study) || /sop.*shadow/i.test(x.title))){
+    if(!x.fixed && x.len===8 && (isPracticeWork(x) || /sop.*shadow/i.test(x.title))){
       roots[x.id]=JSON.parse(JSON.stringify(x));
       split2.push(Object.assign({},x,{root:x.id,baseTitle:x.title,title:x.title+' (part 1/2)',len:4,hours:1}));
       split2.push(Object.assign({},x,{id:x.id+'s1',root:x.id,baseTitle:x.title,title:x.title+' (part 2/2)',len:4,hours:1}));
@@ -870,8 +903,8 @@ function buildTasks(rows, fills, tech, opts){
   tasks=split2;
   var totalSlots=0; tasks.forEach(function(x){ totalSlots+=x.len; });
   var lunch={ id:'lunch', title:'Lunch', hours:0.75, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
-  var peels=tasks.filter(isPeel);
-  if(peels.length===1){
+  var peels=tasks.filter(isPeel), needHour=lunchNeedsHour(tasks,shift,opts&&opts.sheet);
+  if(peels.length===1 && needHour){
     var pt=peels[0];
     lunch.peel={id:pt.id,title:pt.title,hours:pt.hours,len:pt.len,study:pt.study,room:pt.room,team:pt.team,pm:pt.pm,kind:pt.kind};
     lunch.peelFirst=true; lunch.len=LUNCH_LEN+pt.len; lunch.title='Lunch + PEEL In/Out';
@@ -881,13 +914,13 @@ function buildTasks(rows, fills, tech, opts){
   var shortDay=!!(opts&&opts.skipLunchShort) && totalSlots<=SHORT_DAY_SLOTS;
   var noLunchWhy=dayOff?'dayoff':(shortDay?'short':'');
   if(!noLunchWhy) tasks.push(lunch); else if(lunch.peel){ var pp=lunch.peel; tasks.push({id:pp.id,title:pp.title,hours:pp.hours,len:pp.len,study:pp.study,room:pp.room,team:pp.team,pm:pp.pm,kind:pp.kind||'flex',fixed:false,start:null,notes:''}); }
-  return { tasks:tasks, rooms:rooms, roots:roots, warnings:warnings, shift:shift, noLunch:noLunchWhy };
+  return { tasks:tasks, rooms:rooms, roots:roots, warnings:warnings, shift:shift, noLunch:noLunchWhy, notices:notices, lunchMode:needHour?'':(weekendSheet(opts&&opts.sheet)?'weekend':'cafe'), peelLoose:(peels.length===1&&!needHour) };
 }
-function isPracticeTask(t){ return /^pdpractice/i.test(t.study||'') || /biomethod/i.test(t.title||''); }
+function isPracticeTask(t){ return isPracticeWork(t); }
 function isBreak(t){ return !t.fixed && t.kind!=='lunch' && /stretch\s*\/?\s*break|break\s*time/i.test(t.title); }
 var NO_BREAK_RULES=false;
 function flagOf(t){ if(NO_BREAK_RULES) return ''; return t.kind==='lunch'?'L':(isBreak(t)?'B':''); }
-function diffRoom(a,b){ return !!(a&&b&&String(a).toLowerCase()!==String(b).toLowerCase()); }
+function diffRoom(a,b){ return !!(a&&b&&!isNeutralRoom(a)&&!isNeutralRoom(b)&&String(a).toLowerCase()!==String(b).toLowerCase()); }
 function slotRooms(t){
   var a=[],i;
   if(t.kind==='lunch' && t.peel){ var p=t.peel; for(i=0;i<t.len;i++){ var inP=t.peelFirst? i<p.len : i>=t.len-p.len; a.push(inP?(p.room||''):''); } }
@@ -967,7 +1000,7 @@ function nearestValid(t, s0, allowOverlap){
   return null;
 }
 function whyNot(t){
-  if(t.kind==='lunch') return 'No open gap for lunch. The 1-hour block (15-min PEEL out + lunch) has to start by '+fmt(lunchLastSlot(S.shiftStart))+', so lunch begins between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).';
+  if(t.kind==='lunch') return t.peel?('No open gap for lunch. The 1-hour block (15-min PEEL out + lunch) has to start by '+fmt(lunchLastSlot(S.shiftStart))+', so lunch begins between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).'):('No open 45-minute gap for lunch. Lunch has to start between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).');
   if(t.kind==='am') return 'No open gap before 12:00 PM that fits this Flex AM task.';
   if(t.kind==='pm') return 'No open gap after 12:00 PM that fits this Flex PM task.';
   return 'No open gap that fits this task.';
@@ -1007,6 +1040,7 @@ function colorOf(t){
 }
 function typeLabel(t){ if(t.kind==='lunch'&&t.peel) return 'Lunch (45 min) + PEEL In/Out'; return {fixed:'Non-Flex (fixed time)',flex:'Flex (any time)',am:'Flex AM (before 12:00 PM)',pm:'Flex PM (after 12:00 PM)',lunch:'Lunch (45 min)'}[t.kind]; }
 function render(){
+  S.tasks.forEach(function(t){ if(t.start==null && t.done) delete t.done; });
   renderHeader(); renderRows(); renderBlocks(); renderTray(); renderLegend();
 }
 function renderHeader(){
@@ -1031,6 +1065,8 @@ function renderHeader(){
   var c2=$('#cap2'); c2.classList.remove('hidden');
   c2.textContent=(tslots>MAX_TASK_SLOTS?'\u26a0 ':'')+'Task time '+fmtDur(tslots/4)+' of 8 h (lunch not counted)';
   c2.className='chip'+(tslots>MAX_TASK_SLOTS?' bad':'');
+  var pl=placed(), dn=pl.filter(function(t){ return t.done; }).length, dc=$('#doneChip');
+  dc.textContent='\u2714 '+dn+' of '+pl.length+' placed tasks complete'; dc.className='chip good'+(dn?'':' hidden');
   $('#undoBtn').disabled=!undoStack.length;
   renderPersonSel();
   $('#lunchTog').checked=S.tasks.some(function(t){ return t.kind==='lunch'; });
@@ -1060,7 +1096,7 @@ function updateOff(){
 }
 function mkLabelBits(t, withMeta, metaText){
   var inn=el('div','in');
-  var r1=el('div','r1'); r1.appendChild(el('span','bt',t.title));
+  var r1=el('div','r1'); r1.appendChild(el('span','bt',(t.done?'\u2714 ':'')+t.title));
   if(t.notes && String(t.notes).trim()) r1.appendChild(el('span','nt','\ud83d\udcdd'));
   if(t.room) r1.appendChild(el('span','rb',t.room));
   inn.appendChild(r1);
@@ -1076,7 +1112,7 @@ function comboParts(d,t,placedStart){
     pTime='  '+fmt(ps)+' - '+fmt(ps+p.len); lTime=fmt(ls)+' - '+fmt(ls+LUNCH_LEN);
   } else lTime='start '+lunchWinTxt();
   seg.appendChild(document.createTextNode('PEEL In/Out'+pTime));
-  var r1=el('div','r1'); r1.appendChild(el('span','bt','Lunch'));
+  var r1=el('div','r1'); r1.appendChild(el('span','bt',(t.done?'\u2714 ':'')+'Lunch'));
   if(t.notes&&String(t.notes).trim()) r1.appendChild(el('span','nt','\ud83d\udcdd'));
   inn.appendChild(r1); inn.appendChild(el('div','bm',lTime));
   inn.style.cssText='position:absolute;left:0;right:0;height:auto;'+(first?'top:calc(var(--slot)*'+p.len+');bottom:0':'top:0;bottom:calc(var(--slot)*'+p.len+')');
@@ -1084,17 +1120,18 @@ function comboParts(d,t,placedStart){
 }
 function renderBlocks(){
   var lanes=$('#lanes');
-  Array.prototype.slice.call(lanes.querySelectorAll('.block')).forEach(function(n){ n.remove(); });
+  Array.prototype.slice.call(lanes.querySelectorAll('.block,.notice')).forEach(function(n){ n.remove(); });
+  (S.notices||[]).forEach(function(n){ var d=el('div','notice'); d.style.top='calc(var(--slot)*'+n.start+')'; d.style.height='calc(var(--slot)*'+n.len+')'; d.title=n.title+'\n'+fmt(n.start)+' - '+fmt(n.start+n.len)+'\n(Reminder only \u2014 not counted as a task or a conflict.)'; d.textContent='\ud83d\udd14'; lanes.insertBefore(d,lanes.firstChild); });
   var list=placed(); computeLanes(list);
   list.forEach(function(t){
-    var d=el('div','block '+(t.fixed?'fixed':'flexb')+' h'+Math.min(t.len,4));
+    var d=el('div','block '+(t.fixed?'fixed':'flexb')+(t.done?' done':'')+' h'+Math.min(t.len,4));
     d.dataset.id=t.id;
     d.style.top='calc(var(--slot)*'+t.start+' + 1px)';
     d.style.height='calc(var(--slot)*'+t.len+' - 2px)';
     d.style.left='calc('+t._lane+' / '+t._lanes+' * 100% + 2px)';
     d.style.width='calc(100% / '+t._lanes+' - 4px)';
     d.style.background=colorOf(t);
-    d.title=t.title+'\n'+fmt(t.start)+' - '+fmt(t.start+t.len)+(t.fixed?'  (fixed)':'');
+    d.title=t.title+'\n'+fmt(t.start)+' - '+fmt(t.start+t.len)+(t.fixed?'  (fixed)':'')+(t.done?'\n\u2714 Completed':'');
     if(t.peel) comboParts(d,t,t.start); else d.appendChild(mkLabelBits(t, t.len>=2, fmt(t.start)+' - '+fmt(t.start+t.len)));
     if(!t.fixed){
       var x=el('button','xbtn','\u00d7'); x.title='Remove from schedule';
@@ -1120,7 +1157,7 @@ function renderTray(){
       var meta=fmtDur(t.hours)+(t.kind==='lunch'?' \u00b7 start '+lunchWinTxt():(t.study?' \u00b7 '+t.study:''));
       if(t.peel) comboParts(c,t,null); else c.appendChild(mkLabelBits(t, t.len>=2, meta));
       if(canSplit(t)){
-        if(/^pdpractice/i.test(t.study)) c.classList.add('prac');
+        if(isPracticeWork(t)) c.classList.add('prac');
         var sb=el('button','sbtn','\u2702 Split'); sb.title='Split into two parts';
         sb.addEventListener('pointerdown',function(e){ e.stopPropagation(); });
         sb.addEventListener('click',function(e){ e.stopPropagation(); showSplit(t); });
@@ -1134,7 +1171,7 @@ function renderTray(){
   });
   if(!S.tasks.some(function(t){ return t.kind==='lunch'; })) box.appendChild(el('div','empty','No lunch on this schedule. Tick \u201cLunch\u201d at the top to add one.'));
   if(!un.length) box.appendChild(el('div','empty','\u2713 All flexible tasks are on your calendar.'));
-  if(un.some(function(t){ return /^pdpractice/i.test(t.study)&&canSplit(t); })) box.appendChild(el('div','empty','Tip: practice blocks can be split \u2014 click \u2702 Split.'));
+  if(un.some(function(t){ return isPracticeWork(t)&&canSplit(t); })) box.appendChild(el('div','empty','Tip: practice blocks can be split \u2014 click \u2702 Split.'));
 }
 function renderLegend(){
   var lg=$('#legend'); lg.innerHTML='';
@@ -1149,6 +1186,7 @@ function renderLegend(){
 var drag=null, raf=0;
 function beginDrag(e, t, src){
   if(e.button!==0 || e.target.closest('.xbtn')) return;
+  if(t.done) return; /* completed tasks are locked until marked not complete */
   hideMenu();
   var r=src.getBoundingClientRect();
   drag={ shift:e.shiftKey, t:t, src:src, sx:e.clientX, sy:e.clientY, x:e.clientX, y:e.clientY, offX:e.clientX-r.left, offY:e.clientY-r.top, w:r.width, h:r.height, active:false, ghost:null, snap:null, zone:null };
@@ -1246,6 +1284,7 @@ function hideMenu(){ $('#menu').classList.add('hidden'); }
 function showMenu(x,y,t){
   var m=$('#menu'); m.innerHTML='';
   var b=el('button','','\u2139\ufe0f  Info'); b.addEventListener('click',function(){ hideMenu(); showInfo(t); }); m.appendChild(b);
+  if(t.start!=null){ var dnb=el('button','',t.done?'\u21ba  Mark not complete':'\u2714  Mark complete'); dnb.addEventListener('click',function(){ hideMenu(); pushUndo(); if(t.done) delete t.done; else t.done=true; render(); }); m.appendChild(dnb); }
   if(!t.fixed && t.start!=null){
     var u=el('button','','\u21a9  Remove from schedule'); u.addEventListener('click',function(){ hideMenu(); pushUndo(); t.start=null; render(); }); m.appendChild(u);
   }
@@ -1288,7 +1327,7 @@ function showInfo(t,tab){
   }
   if(t.kind==='lunch'){
     kv('Type','Lunch break (45 min)');
-    kv('Rule','Lunch must start between '+lunchWinTxt()+' (at least 2 hours into your shift, and not before your AM break). The 15-minute PEEL out comes right before lunch, so the whole 1-hour block has to start by '+fmt(lunchLastSlot(S.shiftStart))+'.');
+    kv('Rule','Lunch must start between '+lunchWinTxt()+' (at least 2 hours into your shift, and not before your AM break).'+(t.peel?' The 15-minute PEEL out comes right before lunch, so the whole 1-hour block has to start by '+fmt(lunchLastSlot(S.shiftStart))+'.':' Only a 45-minute window is needed (weekend, or a Cafe meeting near lunch); PEEL In/Out is its own flexible task.'));
     if(t.peel){
       kv('Includes','PEEL In/Out ('+fmtDur(t.peel.hours)+') '+(t.peelFirst?'before':'after')+' lunch \u2014 attached. Right-click to detach.');
       kv('Study',t.peel.study); kv('Room',t.peel.room||'', t.peel.room?S.rooms[t.peel.room]:null);
@@ -1302,6 +1341,7 @@ function showInfo(t,tab){
   }
   if(t.added) kv('Note','Added manually (not from the Excel sheet)');
   if(t.root) kv('Split','This is one part of a split task');
+  if(t.done) kv('Status','\u2714 Completed');
   kv('Scheduled', t.start!=null ? fmt(t.start)+' - '+fmt(t.start+t.len) : 'Not placed yet');
   kv('Duration',fmtDur(t.hours+(t.peel?t.peel.hours:0))+(t.origLen?'  (changed from '+fmtDur(t.origLen/4)+')':''));
   var ta=document.createElement('textarea'); ta.rows=7; ta.placeholder='Add notes for this task (e.g. "waiting on animals", "ask PM about cage change")\u2026'; ta.value=t.notes||'';
@@ -1375,14 +1415,15 @@ function start(name){
   }
   var sheetName=$('#sheetSel').value||wbCache.SheetNames[0];
   var fresh=function(){
-  var built=buildTasks(data.rows,data.fills,res.match,{skipLunchShort:true});
-  dirty=false; undoStack=[]; S.roots=built.roots||{}; S.tasks=built.tasks; S.rooms=built.rooms; S.tech=res.match; S.warnings=built.warnings;
+  var built=buildTasks(data.rows,data.fills,res.match,{skipLunchShort:true,sheet:sheetName});
+  dirty=false; undoStack=[]; S.roots=built.roots||{}; S.tasks=built.tasks; S.notices=built.notices||[]; S.rooms=built.rooms; S.tech=res.match; S.warnings=built.warnings;
   S.sheet=$('#sheetSel').value||wbCache.SheetNames[0]; S.shiftStart=built.shift;
   $('#nameIn').value=res.match;
   showScreen('app');
   $('#rows').innerHTML='';
   render(); $('#calScroll').scrollTop=0;
   if(S.warnings.length) toast(S.warnings[0]+(S.warnings.length>1?' (+'+(S.warnings.length-1)+' more)':''));
+  else if(built.peelLoose) toast((built.lunchMode==='weekend'?'Weekend: no PEEL block is needed for lunch.':'A Cafe meeting is near lunch, so lunch only needs a 45-minute window.')+' PEEL In/Out stays in your task list as its own flexible task.');
   else if(built.noLunch==='short') toast('No lunch is scheduled for this day (5 hours or less of tasks). Tick \u201cLunch\u201d at the top if you want one.');
   scrollToShift();
   };
@@ -1445,14 +1486,14 @@ function buildWorkbook(){
     for(var c2=1;c2<=L;c2++) put(R0+i,c2,'',{border:box,fill:off?{patternType:'solid',fgColor:{rgb:'EEF0F4'}}:undefined});
   }
   list.forEach(function(t){
-    var fill={patternType:'solid',fgColor:{rgb:colorOf(t).replace('#','')}};
-    var txt=t.title+'\n'+fmt(t.start)+' - '+fmt(t.start+t.len)+(t.room?'  |  '+t.room:'');
+    var fill={patternType:'solid',fgColor:{rgb:t.done?darkHex(colorOf(t)):colorOf(t).replace('#','')}};
+    var txt=(t.done?'\u2714 ':'')+t.title+'\n'+fmt(t.start)+' - '+fmt(t.start+t.len)+(t.room?'  |  '+t.room:'');
     var bs=t.fixed?'medium':'thin', bc={rgb:t.fixed?'333333':'666666'};
     for(var r=t.start;r<t.start+t.len;r++){
       for(var cc=t._c0+1;cc<=t._c1+1;cc++){
         var top=(r===t.start), bot=(r===t.start+t.len-1), lf=(cc===t._c0+1), rt=(cc===t._c1+1);
         var b={ top:top?{style:bs,color:bc}:undefined, bottom:bot?{style:bs,color:bc}:undefined, left:lf?{style:bs,color:bc}:undefined, right:rt?{style:bs,color:bc}:undefined };
-        put(R0+r,cc,(r===t.start&&cc===t._c0+1)?txt:'',{fill:fill,font:{name:'Arial',sz:9,bold:false,color:{rgb:'1D2330'}},alignment:{wrapText:true,vertical:'top'},border:b});
+        put(R0+r,cc,(r===t.start&&cc===t._c0+1)?txt:'',{fill:fill,font:{name:'Arial',sz:9,bold:false,color:{rgb:t.done?'FFFFFF':'1D2330'}},alignment:{wrapText:true,vertical:'top'},border:b});
       }
     }
     merges.push({s:{r:R0+t.start,c:t._c0+1},e:{r:R0+t.start+t.len-1,c:t._c1+1}});
@@ -1465,14 +1506,14 @@ function buildWorkbook(){
   XLSX.utils.book_append_sheet(wb,ws,'Day View');
 
   // Task list sheet
-  var ts={}; var heads=['Start','End','Duration','Task','Study','Room','Type','Techs','PM','Notes'];
+  var ts={}; var heads=['Start','End','Duration','Task','Study','Room','Type','Techs','PM','Notes','Done'];
   function put2(r,c,v,s){ ts[XLSX.utils.encode_cell({r:r,c:c})]={v:v==null?'':v,t:'s',s:s||{}}; }
   heads.forEach(function(h,c){ put2(0,c,h,{font:{name:'Arial',bold:true,sz:10},fill:{patternType:'solid',fgColor:{rgb:'DDDDDD'}},border:box}); });
   var EN=entries(), sorted=EN.filter(function(t){ return t.start!=null; }).sort(function(a,b){ return a.start-b.start; });
   var un=EN.filter(function(t){ return t.start==null; });
   var rr=1;
   function row(t){
-    var vals=[t.start!=null?fmt(t.start):'Not scheduled', t.start!=null?fmt(t.start+t.len):'', fmtDur(t.hours), t.title, t.study, t.room, typeLabel(t), t.team, t.pm, t.notes||''];
+    var vals=[t.start!=null?fmt(t.start):'Not scheduled', t.start!=null?fmt(t.start+t.len):'', fmtDur(t.hours), t.title, t.study, t.room, typeLabel(t), t.team, t.pm, t.notes||'', t.done?'\u2714':''];
     vals.forEach(function(v,c){
       var st={font:{name:'Arial',sz:10},alignment:{wrapText:true,vertical:'top'},border:box};
       if(c===5 && t.room) st.fill={patternType:'solid',fgColor:{rgb:colorOf(t).replace('#','')}};
@@ -1483,7 +1524,7 @@ function buildWorkbook(){
   }
   sorted.forEach(row); un.forEach(row);
   ts['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(rr-1,0),c:heads.length-1}});
-  ts['!cols']=[{wch:11},{wch:11},{wch:12},{wch:60},{wch:16},{wch:8},{wch:24},{wch:34},{wch:22},{wch:40}];
+  ts['!cols']=[{wch:11},{wch:11},{wch:12},{wch:60},{wch:16},{wch:8},{wch:24},{wch:34},{wch:22},{wch:40},{wch:7}];
   XLSX.utils.book_append_sheet(wb,ts,'Task List');
   return wb;
 }
@@ -1513,19 +1554,19 @@ function buildPdf(){
   doc.setTextColor(0); doc.setDrawColor(120); doc.setLineWidth(0.7); doc.line(gx,gridTop,gx,gridBot);
   list.forEach(function(t){
     var x=gx+t._lane*gw/t._lanes+1.5, w=gw/t._lanes-3, y=gridTop+t.start*rowH+0.8, h=t.len*rowH-1.6;
-    var rgb=hexToRgb(colorOf(t)); doc.setFillColor(rgb[0],rgb[1],rgb[2]);
+    var rgb=hexToRgb(t.done?darkHex(colorOf(t)):colorOf(t)); doc.setFillColor(rgb[0],rgb[1],rgb[2]);
     doc.setLineWidth(0.8); doc.setDrawColor(70);
     if(!t.fixed) doc.setLineDashPattern([2.5,2],0);
     doc.roundedRect(x,y,w,h,2,2,'FD'); doc.setLineDashPattern([],0);
     var tx=x+(t.fixed?7:4); if(t.fixed){ doc.setFillColor(60); doc.rect(x,y,3.5,h,'F'); }
     var maxW=w-(tx-x)-4-(t.room?26:0);
-    doc.setFont('helvetica','bold'); doc.setFontSize(t.len===1?7:7.5); doc.setTextColor(25,30,45);
+    doc.setFont('helvetica','bold'); doc.setFontSize(t.len===1?7:7.5); if(t.done) doc.setTextColor(255); else doc.setTextColor(25,30,45);
     var avail=Math.max(1,Math.floor((h-2)/8.4)), withMeta=t.len>=2, tl=withMeta?Math.max(1,avail-1):1;
-    var lines=doc.splitTextToSize(safe(t.title),maxW);
+    var lines=doc.splitTextToSize(safe((t.done?'[done] ':'')+t.title),maxW);
     if(lines.length>tl){ lines=lines.slice(0,tl); var last=lines[tl-1]; while(last.length>3 && doc.getTextWidth(last+'...')>maxW) last=last.slice(0,-1); lines[tl-1]=last.replace(/\s+$/,'')+'...'; }
     doc.text(lines,tx,y+7.6,{baseline:'alphabetic'});
     if(t.room){ doc.setFont('helvetica','bold'); doc.setFontSize(6.5); doc.text(safe(t.room),x+w-4,y+7.4,{align:'right'}); }
-    if(withMeta){ doc.setFont('helvetica','normal'); doc.setFontSize(6.8); doc.setTextColor(70,75,90); doc.text(fmt(t.start)+' - '+fmt(t.start+t.len),tx,y+7.6+lines.length*8.1); }
+    if(withMeta){ doc.setFont('helvetica','normal'); doc.setFontSize(6.8); if(t.done) doc.setTextColor(220,224,232); else doc.setTextColor(70,75,90); doc.text(fmt(t.start)+' - '+fmt(t.start+t.len),tx,y+7.6+lines.length*8.1); }
     doc.setTextColor(0);
   });
   // legend
@@ -1548,7 +1589,7 @@ function buildPdf(){
   all.forEach(function(t){
     doc.setFont('helvetica','normal'); doc.setFontSize(8);
     var timeTxt=t.start!=null?fmt(t.start)+' - '+fmt(t.start+t.len):'NOT SCHEDULED';
-    var cells=[ doc.splitTextToSize(safe(timeTxt),cols[0].w-8), doc.splitTextToSize(safe(t.title),cols[1].w-8), doc.splitTextToSize(safe(t.study||'-'),cols[2].w-8), doc.splitTextToSize(safe(t.room||'-'),cols[3].w-8) ];
+    var cells=[ doc.splitTextToSize(safe(timeTxt),cols[0].w-8), doc.splitTextToSize(safe((t.done?'[done] ':'')+t.title),cols[1].w-8), doc.splitTextToSize(safe(t.study||'-'),cols[2].w-8), doc.splitTextToSize(safe(t.room||'-'),cols[3].w-8) ];
     var extra=[]; if(t.team) extra=extra.concat(doc.splitTextToSize(safe('Techs: '+t.team),cols[4].w-8)); if(t.pm) extra=extra.concat(doc.splitTextToSize(safe('PM: '+t.pm),cols[4].w-8)); if(t.notes&&t.notes.trim()) extra=extra.concat(doc.splitTextToSize(safe('Notes: '+t.notes.replace(/\s+/g,' ')),cols[4].w-8)); if(!extra.length) extra=['-'];
     cells.push(extra);
     var n=Math.max.apply(null,cells.map(function(c){ return c.length; })), rh=n*9.6+6;
@@ -1576,7 +1617,7 @@ function buildPrintSheet(){
   all.forEach(function(t){
     var tr=document.createElement('tr');
     tr.appendChild(el('td','',t.start!=null?fmt(t.start)+' - '+fmt(t.start+t.len):'NOT SCHEDULED'));
-    tr.appendChild(el('td','',t.title)); tr.appendChild(el('td','',t.study||'')); 
+    tr.appendChild(el('td','',(t.done?'\u2714 ':'')+t.title)); tr.appendChild(el('td','',t.study||'')); 
     var rc=el('td','',t.room||''); if(t.room) rc.style.background=colorOf(t); tr.appendChild(rc);
     tr.appendChild(el('td','',t.team||'')); tr.appendChild(el('td','',t.pm||'')); tr.appendChild(el('td','',t.notes||''));
     body.appendChild(tr);
@@ -1879,7 +1920,7 @@ function diagnose(flex,fm,lo,hi){
 }
 function splitSearch(flex,fm,lo,hi){
   var c=flex.filter(function(t){ return canSplit(t)&&!isBreak(t)&&t.len>=3; });
-  c.sort(function(a,b){ var pa=/^pdpractice/i.test(a.study)?0:1, pb=/^pdpractice/i.test(b.study)?0:1; return pa-pb||b.len-a.len; });
+  c.sort(function(a,b){ var pa=isPracticeWork(a)?0:1, pb=isPracticeWork(b)?0:1; return pa-pb||b.len-a.len; });
   c=c.slice(0,5); if(!c.length) return null;
   var gaps={}, run=0, i;
   for(i=lo;i<hi;i++){ if(!fm.occ[i]) run++; else { if(run) gaps[run]=1; run=0; } }
@@ -2007,8 +2048,8 @@ function entries(list){
     if(t.kind==='lunch' && t.peel){
       var p=t.peel, ps=null, ls=null;
       if(t.start!=null){ ps=t.start+(t.peelFirst?0:LUNCH_LEN); ls=t.start+(t.peelFirst?p.len:0); }
-      var pe={title:p.title,hours:p.hours,study:p.study,room:p.room,kind:p.kind||'flex',team:p.team,pm:p.pm,notes:'',start:ps,len:p.len,fixed:false};
-      var le={title:'Lunch',hours:0.75,study:'',room:'',kind:'lunch',team:'',pm:'',notes:t.notes||'',start:ls,len:LUNCH_LEN,fixed:false};
+      var pe={title:p.title,hours:p.hours,study:p.study,room:p.room,kind:p.kind||'flex',team:p.team,pm:p.pm,notes:'',start:ps,len:p.len,fixed:false,done:t.done};
+      var le={title:'Lunch',hours:0.75,study:'',room:'',kind:'lunch',team:'',pm:'',notes:t.notes||'',start:ls,len:LUNCH_LEN,fixed:false,done:t.done};
       if(t.peelFirst){ out.push(pe); out.push(le); } else { out.push(le); out.push(pe); }
     } else out.push(t);
   });
@@ -2019,7 +2060,7 @@ function addLunchTask(){
   pushUndo();
   var lunch={ id:'lunch', title:'Lunch', hours:0.75, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
   var peels=S.tasks.filter(isPeel);
-  if(peels.length===1){
+  if(peels.length===1 && lunchNeedsHour(S.tasks,S.shiftStart,S.sheet)){
     var pt=peels[0];
     lunch.peel={id:pt.id,title:pt.title,hours:pt.hours,len:pt.len,study:pt.study,room:pt.room,team:pt.team,pm:pt.pm,kind:pt.kind};
     lunch.peelFirst=true; lunch.len=LUNCH_LEN+pt.len; lunch.title='Lunch + PEEL In/Out';
@@ -2057,10 +2098,10 @@ function swapPeel(lunch){
   render();
 }
 function saveObj(){
-  return JSON.parse(JSON.stringify({app:'schedplanner',v:2,tech:S.tech,sheet:S.sheet,fileName:fileName,savedAt:Date.now(),tasks:S.tasks,roots:S.roots,shift:S.shiftStart,rooms:S.rooms,addCnt:addCnt},function(k,v){ return (k&&k.charAt(0)==='_')?undefined:v; }));
+  return JSON.parse(JSON.stringify({app:'schedplanner',v:2,tech:S.tech,sheet:S.sheet,fileName:fileName,savedAt:Date.now(),tasks:S.tasks,notices:S.notices,roots:S.roots,shift:S.shiftStart,rooms:S.rooms,addCnt:addCnt},function(k,v){ return (k&&k.charAt(0)==='_')?undefined:v; }));
 }
 function loadSaved(o){
-  undoStack=[]; S.tasks=o.tasks; S.roots=o.roots||{}; S.rooms=o.rooms||{}; S.shiftStart=o.shift; S.tech=o.tech; S.sheet=o.sheet; S.warnings=[];
+  undoStack=[]; S.tasks=o.tasks; S.notices=o.notices||[]; S.roots=o.roots||{}; S.rooms=o.rooms||{}; S.shiftStart=o.shift; S.tech=o.tech; S.sheet=o.sheet; S.warnings=[];
   fileName=o.fileName||''; addCnt=Math.max(addCnt,o.addCnt||0); dirty=false;
   showScreen('app'); $('#rows').innerHTML='';
   render(); scrollToShift(); toast('Opened saved schedule for '+o.tech+'.');
