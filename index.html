@@ -743,7 +743,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 var SLOTS = 46;
 var DAY_START = 360;
 var NOON = 24;
-var LUNCH_LEN = 3;
+var LUNCH_LEN = 2;
 var SHIFT_SLOTS = 34;
 var MAX_TASK_SLOTS = 32;
 var LUNCH_WINDOW = 20;
@@ -902,7 +902,7 @@ function buildTasks(rows, fills, tech, opts){
   });
   tasks=split2;
   var totalSlots=0; tasks.forEach(function(x){ totalSlots+=x.len; });
-  var lunch={ id:'lunch', title:'Lunch', hours:0.75, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
+  var lunch={ id:'lunch', title:'Lunch', hours:0.5, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
   var peels=tasks.filter(isPeel), needHour=lunchNeedsHour(tasks,shift,opts&&opts.sheet);
   if(peels.length===1 && needHour){
     var pt=peels[0];
@@ -1000,7 +1000,7 @@ function nearestValid(t, s0, allowOverlap){
   return null;
 }
 function whyNot(t){
-  if(t.kind==='lunch') return t.peel?('No open gap for lunch. The 1-hour block (15-min PEEL out + lunch) has to start by '+fmt(lunchLastSlot(S.shiftStart))+', so lunch begins between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).'):('No open 45-minute gap for lunch. Lunch has to start between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).');
+  if(t.kind==='lunch') return t.peel?('No open gap for lunch. The 45-minute block (15-min PEEL + 30-min lunch) has to start by '+fmt(lunchLastSlot(S.shiftStart))+', so lunch begins between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).'):('No open 30-minute gap for lunch. Lunch has to start between '+lunchWinTxt()+' (at least 2 hours into your shift, and after your AM break).');
   if(t.kind==='am') return 'No open gap before 12:00 PM that fits this Flex AM task.';
   if(t.kind==='pm') return 'No open gap after 12:00 PM that fits this Flex PM task.';
   return 'No open gap that fits this task.';
@@ -1038,7 +1038,7 @@ function colorOf(t){
   if(t.room && S.rooms[t.room]) return S.rooms[t.room];
   return NEUTRAL;
 }
-function typeLabel(t){ if(t.kind==='lunch'&&t.peel) return 'Lunch (45 min) + PEEL In/Out'; return {fixed:'Non-Flex (fixed time)',flex:'Flex (any time)',am:'Flex AM (before 12:00 PM)',pm:'Flex PM (after 12:00 PM)',lunch:'Lunch (45 min)'}[t.kind]; }
+function typeLabel(t){ if(t.kind==='lunch'&&t.peel) return 'Lunch (30 min) + PEEL In/Out'; return {fixed:'Non-Flex (fixed time)',flex:'Flex (any time)',am:'Flex AM (before 12:00 PM)',pm:'Flex PM (after 12:00 PM)',lunch:'Lunch (30 min)'}[t.kind]; }
 function render(){
   S.tasks.forEach(function(t){ if(t.start==null && t.done) delete t.done; });
   renderHeader(); renderRows(); renderBlocks(); renderTray(); renderLegend();
@@ -1326,8 +1326,8 @@ function showInfo(t,tab){
     vv.appendChild(document.createTextNode(v)); r.appendChild(vv); b.appendChild(r);
   }
   if(t.kind==='lunch'){
-    kv('Type','Lunch break (45 min)');
-    kv('Rule','Lunch must start between '+lunchWinTxt()+' (at least 2 hours into your shift, and not before your AM break).'+(t.peel?' The 15-minute PEEL out comes right before lunch, so the whole 1-hour block has to start by '+fmt(lunchLastSlot(S.shiftStart))+'.':' Only a 45-minute window is needed (weekend, or a Cafe meeting near lunch); PEEL In/Out is its own flexible task.'));
+    kv('Type','Lunch break (30 min)');
+    kv('Rule','Lunch must start between '+lunchWinTxt()+' (at least 2 hours into your shift, and not before your AM break).'+(t.peel?' The 15-minute PEEL is attached to lunch, so the whole 45-minute block has to start by '+fmt(lunchLastSlot(S.shiftStart))+'.':' Only a 30-minute window is needed (weekend, or a Cafe meeting near lunch); PEEL In/Out is its own flexible task.'));
     if(t.peel){
       kv('Includes','PEEL In/Out ('+fmtDur(t.peel.hours)+') '+(t.peelFirst?'before':'after')+' lunch \u2014 attached. Right-click to detach.');
       kv('Study',t.peel.study); kv('Room',t.peel.room||'', t.peel.room?S.rooms[t.peel.room]:null);
@@ -1423,7 +1423,7 @@ function start(name){
   $('#rows').innerHTML='';
   render(); $('#calScroll').scrollTop=0;
   if(S.warnings.length) toast(S.warnings[0]+(S.warnings.length>1?' (+'+(S.warnings.length-1)+' more)':''));
-  else if(built.peelLoose) toast((built.lunchMode==='weekend'?'Weekend: no PEEL block is needed for lunch.':'A Cafe meeting is near lunch, so lunch only needs a 45-minute window.')+' PEEL In/Out stays in your task list as its own flexible task.');
+  else if(built.peelLoose) toast((built.lunchMode==='weekend'?'Weekend: no PEEL block is needed for lunch.':'A Cafe meeting is near lunch, so lunch only needs a 30-minute window.')+' PEEL In/Out stays in your task list as its own flexible task.');
   else if(built.noLunch==='short') toast('No lunch is scheduled for this day (5 hours or less of tasks). Tick \u201cLunch\u201d at the top if you want one.');
   scrollToShift();
   };
@@ -2049,7 +2049,7 @@ function entries(list){
       var p=t.peel, ps=null, ls=null;
       if(t.start!=null){ ps=t.start+(t.peelFirst?0:LUNCH_LEN); ls=t.start+(t.peelFirst?p.len:0); }
       var pe={title:p.title,hours:p.hours,study:p.study,room:p.room,kind:p.kind||'flex',team:p.team,pm:p.pm,notes:'',start:ps,len:p.len,fixed:false,done:t.done};
-      var le={title:'Lunch',hours:0.75,study:'',room:'',kind:'lunch',team:'',pm:'',notes:t.notes||'',start:ls,len:LUNCH_LEN,fixed:false,done:t.done};
+      var le={title:'Lunch',hours:0.5,study:'',room:'',kind:'lunch',team:'',pm:'',notes:t.notes||'',start:ls,len:LUNCH_LEN,fixed:false,done:t.done};
       if(t.peelFirst){ out.push(pe); out.push(le); } else { out.push(le); out.push(pe); }
     } else out.push(t);
   });
@@ -2058,7 +2058,7 @@ function entries(list){
 function addLunchTask(){
   if(S.tasks.some(function(t){ return t.kind==='lunch'; })) return;
   pushUndo();
-  var lunch={ id:'lunch', title:'Lunch', hours:0.75, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
+  var lunch={ id:'lunch', title:'Lunch', hours:0.5, study:'', room:'', kind:'lunch', team:'', pm:'', fixed:false, start:null, len:LUNCH_LEN, notes:'' };
   var peels=S.tasks.filter(isPeel);
   if(peels.length===1 && lunchNeedsHour(S.tasks,S.shiftStart,S.sheet)){
     var pt=peels[0];
@@ -2101,7 +2101,7 @@ function saveObj(){
   return JSON.parse(JSON.stringify({app:'schedplanner',v:2,tech:S.tech,sheet:S.sheet,fileName:fileName,savedAt:Date.now(),tasks:S.tasks,notices:S.notices,roots:S.roots,shift:S.shiftStart,rooms:S.rooms,addCnt:addCnt},function(k,v){ return (k&&k.charAt(0)==='_')?undefined:v; }));
 }
 function loadSaved(o){
-  undoStack=[]; S.tasks=o.tasks; S.notices=o.notices||[]; S.roots=o.roots||{}; S.rooms=o.rooms||{}; S.shiftStart=o.shift; S.tech=o.tech; S.sheet=o.sheet; S.warnings=[];
+  undoStack=[]; S.tasks=o.tasks; S.tasks.forEach(function(t){ if(t.kind==='lunch'){ t.len=LUNCH_LEN+(t.peel?t.peel.len:0); t.hours=0.5; } }); S.notices=o.notices||[]; S.roots=o.roots||{}; S.rooms=o.rooms||{}; S.shiftStart=o.shift; S.tech=o.tech; S.sheet=o.sheet; S.warnings=[];
   fileName=o.fileName||''; addCnt=Math.max(addCnt,o.addCnt||0); dirty=false;
   showScreen('app'); $('#rows').innerHTML='';
   render(); scrollToShift(); toast('Opened saved schedule for '+o.tech+'.');
